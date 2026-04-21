@@ -38,6 +38,7 @@ dependencies {
     debugImplementation 'io.github.didi.dokit:dokitx:3.5.0'
     releaseImplementation 'io.github.didi.dokit:dokitx-no-op:3.5.0'
     implementation 'com.arthenica:ffmpeg-kit-full:6.0-2'
+    implementation 'com.google.android.exoplayer:exoplayer:2.19.1'
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
