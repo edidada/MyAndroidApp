@@ -17,6 +17,9 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import com.example.utils.LogUtils;
+import com.example.utils.ToastUtils;
+import com.example.utils.StringUtils;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.ui.PlayerView;
@@ -49,9 +52,18 @@ public class MainActivity extends AppCompatActivity {
 
         setupButtons();
 
+        testUtils();
+
         if (!checkStoragePermission()) {
             requestStoragePermission();
         }
+    }
+
+    private void testUtils() {
+        LogUtils.d("MainActivity", "utils 模块测试");
+        String testStr = "hello world";
+        LogUtils.d("StringUtils", "原始: " + testStr + ", 首字母大写: " + StringUtils.capitalize(testStr));
+        ToastUtils.show(this, "utils 模块加载成功！");
     }
 
     private void setupButtons() {
