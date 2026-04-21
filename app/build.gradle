@@ -35,6 +35,8 @@ android {
 dependencies {
     implementation libs.appcompat
     implementation libs.material
+    debugImplementation 'io.github.didi.dokit:dokitx:3.5.0'
+    releaseImplementation 'io.github.didi.dokit:dokitx-no-op:3.5.0'
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
