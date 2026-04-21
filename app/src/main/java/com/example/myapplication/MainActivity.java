@@ -55,6 +55,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupButtons() {
+        Button btnOpenVue = findViewById(R.id.btn_open_vue);
         Button btnPickVideo = findViewById(R.id.btn_pick_video);
         Button btnCutVideo = findViewById(R.id.btn_cut_video);
         Button btnExtractAudio = findViewById(R.id.btn_extract_audio);
@@ -67,6 +68,8 @@ public class MainActivity extends AppCompatActivity {
         Button btnConvertMp3 = findViewById(R.id.btn_convert_mp3);
         Button btnPlayStream = findViewById(R.id.btn_play_stream);
         Button btnTestLive = findViewById(R.id.btn_test_live);
+
+        btnOpenVue.setOnClickListener(v -> openVuePage());
 
         btnPickVideo.setOnClickListener(v -> pickFile(REQUEST_PICK_VIDEO, "video/*"));
         btnCutVideo.setOnClickListener(v -> cutVideo());
@@ -390,6 +393,11 @@ public class MainActivity extends AppCompatActivity {
     private void testLive() {
         showStatus("直播功能: 可以使用 FFmpeg 推流到 RTMP 服务器");
         Toast.makeText(this, "需要配置 RTMP 服务器地址", Toast.LENGTH_LONG).show();
+    }
+
+    private void openVuePage() {
+        Intent intent = new Intent(this, VueActivity.class);
+        startActivity(intent);
     }
 
     @Override

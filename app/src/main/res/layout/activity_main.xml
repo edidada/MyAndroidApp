@@ -18,6 +18,15 @@
             android:gravity="center"
             android:paddingBottom="16dp"/>
 
+        <Button
+            android:id="@+id/btn_open_vue"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="打开 Vue 页面 (vConsole)"
+            android:textSize="16sp"
+            android:layout_marginBottom="16dp"
+            android:backgroundTint="#667eea"/>
+
         <com.google.android.exoplayer2.ui.PlayerView
             android:id="@+id/player_view"
             android:layout_width="match_parent"

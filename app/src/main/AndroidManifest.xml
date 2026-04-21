@@ -36,6 +36,11 @@
             </intent-filter>
         </activity>
         
+        <activity
+            android:name=".VueActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize"/>
+        
     </application>
 
 </manifest>
