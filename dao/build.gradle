@@ -1,0 +1,32 @@
+plugins {
+    alias(libs.plugins.android.library)
+}
+
+android {
+    namespace 'com.example.dao'
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 24
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // This module only contains Java Room code.
+    enableKotlin = false
+}
+
+dependencies {
+    implementation libs.room.runtime
+    annotationProcessor libs.room.compiler
+}

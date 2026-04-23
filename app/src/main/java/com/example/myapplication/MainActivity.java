@@ -3,12 +3,15 @@ package com.example.myapplication;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
+import android.provider.OpenableColumns;
 import android.view.View;
+import android.webkit.MimeTypeMap;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -17,16 +20,22 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import com.example.dao.MediaProcessRecord;
+import com.example.dao.MediaProcessRepository;
 import com.example.utils.DateUtils;
 import com.example.utils.KotlinHelper;
 import com.example.utils.LogUtils;
 import com.example.utils.MathUtils;
-import com.example.utils.ToastUtils;
 import com.example.utils.StringUtils;
+import com.example.utils.ToastUtils;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.ui.PlayerView;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -38,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
     private PlayerView playerView;
     private ExoPlayer player;
     private TextView tvStatus;
+    private MediaProcessRepository mediaProcessRepository;
 
     private String currentVideoPath;
     private String currentAudioPath;
@@ -52,10 +62,12 @@ public class MainActivity extends AppCompatActivity {
 
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
+        mediaProcessRepository = MediaProcessRepository.getInstance(getApplicationContext());
 
         setupButtons();
 
         testUtils();
+        loadLatestRecord();
 
         if (!checkStoragePermission()) {
             requestStoragePermission();
@@ -64,6 +76,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void testUtils() {
         LogUtils.d("MainActivity", "utils 模块测试");
+        LogUtils.d("BuildConfig", "当前环境: " + BuildConfig.ENV + ", API_HOST: " + BuildConfig.API_HOST);
         String testStr = "hello world";
         LogUtils.d("StringUtils", "原始: " + testStr + ", 首字母大写: " + StringUtils.capitalize(testStr));
         
@@ -84,6 +97,8 @@ public class MainActivity extends AppCompatActivity {
         LogUtils.d("KotlinHelper", KotlinHelper.staticMethod());
         
         ToastUtils.show(this, "utils 模块加载成功！Kotlin 调用成功！");
+        mediaProcessRepository.getRecordCount(count ->
+                LogUtils.d("MediaProcessRepository", "当前 Room 记录数: " + count));
     }
 
     private void setupButtons() {
@@ -167,14 +182,21 @@ public class MainActivity extends AppCompatActivity {
         if (resultCode == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri != null) {
-                String path = uri.getPath();
                 if (requestCode == REQUEST_PICK_VIDEO) {
-                    currentVideoPath = path;
-                    tvStatus.setText("已选择视频: " + path);
+                    currentVideoPath = copyUriToLocalFile(uri, "video");
+                    if (currentVideoPath == null) {
+                        showStatus("视频复制失败，无法处理");
+                        return;
+                    }
+                    tvStatus.setText("已选择视频: " + currentVideoPath);
                     playVideo(uri);
                 } else if (requestCode == REQUEST_PICK_AUDIO) {
-                    currentAudioPath = path;
-                    tvStatus.setText("已选择音频: " + path);
+                    currentAudioPath = copyUriToLocalFile(uri, "audio");
+                    if (currentAudioPath == null) {
+                        showStatus("音频复制失败，无法处理");
+                        return;
+                    }
+                    tvStatus.setText("已选择音频: " + currentAudioPath);
                 }
             }
         }
@@ -223,17 +245,113 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
+    @Nullable
+    private String copyUriToLocalFile(@NonNull Uri uri, @NonNull String prefix) {
+        if ("file".equalsIgnoreCase(uri.getScheme())) {
+            return uri.getPath();
+        }
+
+        File cacheDir = new File(getCacheDir(), "picked_media");
+        if (!cacheDir.exists() && !cacheDir.mkdirs()) {
+            return null;
+        }
+
+        String extension = getFileExtension(uri);
+        File targetFile = new File(cacheDir, prefix + "_" + System.currentTimeMillis() + extension);
+
+        try (InputStream inputStream = getContentResolver().openInputStream(uri);
+             OutputStream outputStream = new FileOutputStream(targetFile)) {
+            if (inputStream == null) {
+                return null;
+            }
+
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+            outputStream.flush();
+            return targetFile.getAbsolutePath();
+        } catch (IOException e) {
+            LogUtils.e("MainActivity", "复制媒体文件失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    @NonNull
+    private String getFileExtension(@NonNull Uri uri) {
+        String displayName = queryDisplayName(uri);
+        if (StringUtils.isNotEmpty(displayName)) {
+            int dotIndex = displayName.lastIndexOf('.');
+            if (dotIndex >= 0) {
+                return displayName.substring(dotIndex);
+            }
+        }
+
+        String mimeType = getContentResolver().getType(uri);
+        String extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType);
+        return StringUtils.isNotEmpty(extension) ? "." + extension : ".tmp";
+    }
+
+    @Nullable
+    private String queryDisplayName(@NonNull Uri uri) {
+        try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) {
+                    return cursor.getString(index);
+                }
+            }
+        } catch (Exception e) {
+            LogUtils.e("MainActivity", "读取文件名失败: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private void saveMediaRecord(String operationType, String inputPath, String outputPath) {
+        mediaProcessRepository.saveRecord(operationType, inputPath, outputPath);
+    }
+
+    private void loadLatestRecord() {
+        mediaProcessRepository.getLatestRecord(record -> {
+            if (record == null) {
+                LogUtils.d("MediaProcessRepository", "暂无历史记录");
+                return;
+            }
+            String summary = buildRecordSummary(record);
+            tvStatus.setText("最近记录\n" + summary);
+            LogUtils.d("MediaProcessRepository", "最近记录: " + summary);
+        });
+    }
+
+    private String buildRecordSummary(MediaProcessRecord record) {
+        return "操作: " + record.getOperationType()
+                + "\n时间: " + DateUtils.formatTime(record.getCreatedAt())
+                + "\n输入: " + simplifyPath(record.getInputPath())
+                + "\n输出: " + simplifyPath(record.getOutputPath());
+    }
+
+    private String simplifyPath(String path) {
+        if (StringUtils.isEmpty(path)) {
+            return "-";
+        }
+        int slashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        return slashIndex >= 0 ? path.substring(slashIndex + 1) : path;
+    }
+
     private void cutVideo() {
         if (currentVideoPath == null) {
             showStatus("请先选择视频");
             return;
         }
+        final String inputPath = currentVideoPath;
         String outputPath = new File(getOutputDir(), "cut_" + System.currentTimeMillis() + ".mp4").getAbsolutePath();
         showStatus("正在裁剪视频...");
-        FFmpegHelper.cutVideo(currentVideoPath, outputPath, 0, 10, new FFmpegHelper.FFmpegCallback() {
+        FFmpegHelper.cutVideo(inputPath, outputPath, 0, 10, new FFmpegHelper.FFmpegCallback() {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("cut_video", inputPath, outputPath);
                     showStatus("裁剪成功: " + outputPath);
                     currentVideoPath = outputPath;
                     playVideo(outputPath);
@@ -252,12 +370,14 @@ public class MainActivity extends AppCompatActivity {
             showStatus("请先选择视频");
             return;
         }
+        final String inputPath = currentVideoPath;
         String outputPath = new File(getOutputDir(), "audio_" + System.currentTimeMillis() + ".mp3").getAbsolutePath();
         showStatus("正在提取音频...");
-        FFmpegHelper.extractAudio(currentVideoPath, outputPath, new FFmpegHelper.FFmpegCallback() {
+        FFmpegHelper.extractAudio(inputPath, outputPath, new FFmpegHelper.FFmpegCallback() {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("extract_audio", inputPath, outputPath);
                     showStatus("音频提取成功: " + outputPath);
                     currentAudioPath = outputPath;
                 });
@@ -275,12 +395,14 @@ public class MainActivity extends AppCompatActivity {
             showStatus("请先选择视频");
             return;
         }
+        final String inputPath = currentVideoPath;
         String outputPath = new File(getOutputDir(), "compressed_" + System.currentTimeMillis() + ".mp4").getAbsolutePath();
         showStatus("正在压缩视频...");
-        FFmpegHelper.compressVideo(currentVideoPath, outputPath, 500, new FFmpegHelper.FFmpegCallback() {
+        FFmpegHelper.compressVideo(inputPath, outputPath, 500, new FFmpegHelper.FFmpegCallback() {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("compress_video", inputPath, outputPath);
                     showStatus("压缩成功: " + outputPath);
                     currentVideoPath = outputPath;
                     playVideo(outputPath);
@@ -299,12 +421,14 @@ public class MainActivity extends AppCompatActivity {
             showStatus("请先选择视频");
             return;
         }
+        final String inputPath = currentVideoPath;
         String outputPath = new File(getOutputDir(), "rotated_" + System.currentTimeMillis() + ".mp4").getAbsolutePath();
         showStatus("正在旋转视频...");
-        FFmpegHelper.rotateVideo(currentVideoPath, outputPath, 90, new FFmpegHelper.FFmpegCallback() {
+        FFmpegHelper.rotateVideo(inputPath, outputPath, 90, new FFmpegHelper.FFmpegCallback() {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("rotate_video", inputPath, outputPath);
                     showStatus("旋转成功: " + outputPath);
                     currentVideoPath = outputPath;
                     playVideo(outputPath);
@@ -323,12 +447,15 @@ public class MainActivity extends AppCompatActivity {
             showStatus("请先选择视频和音频");
             return;
         }
+        final String videoInputPath = currentVideoPath;
+        final String audioInputPath = currentAudioPath;
         String outputPath = new File(getOutputDir(), "video_with_audio_" + System.currentTimeMillis() + ".mp4").getAbsolutePath();
         showStatus("正在添加音频...");
-        FFmpegHelper.addAudioToVideo(currentVideoPath, currentAudioPath, outputPath, new FFmpegHelper.FFmpegCallback() {
+        FFmpegHelper.addAudioToVideo(videoInputPath, audioInputPath, outputPath, new FFmpegHelper.FFmpegCallback() {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("add_audio_to_video", videoInputPath + " + " + audioInputPath, outputPath);
                     showStatus("添加音频成功: " + outputPath);
                     currentVideoPath = outputPath;
                     playVideo(outputPath);
@@ -347,12 +474,14 @@ public class MainActivity extends AppCompatActivity {
             showStatus("请先选择音频");
             return;
         }
+        final String inputPath = currentAudioPath;
         String outputPath = new File(getOutputDir(), "cut_audio_" + System.currentTimeMillis() + ".mp3").getAbsolutePath();
         showStatus("正在裁剪音频...");
-        FFmpegHelper.cutAudio(currentAudioPath, outputPath, 0, 10, new FFmpegHelper.FFmpegCallback() {
+        FFmpegHelper.cutAudio(inputPath, outputPath, 0, 10, new FFmpegHelper.FFmpegCallback() {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("cut_audio", inputPath, outputPath);
                     showStatus("音频裁剪成功: " + outputPath);
                     currentAudioPath = outputPath;
                 });
@@ -370,12 +499,14 @@ public class MainActivity extends AppCompatActivity {
             showStatus("请先选择视频");
             return;
         }
+        final String inputPath = currentVideoPath;
         String outputPath = new File(getOutputDir(), "converted_" + System.currentTimeMillis() + ".mp4").getAbsolutePath();
         showStatus("正在转换格式...");
-        FFmpegHelper.convertFormat(currentVideoPath, outputPath, new FFmpegHelper.FFmpegCallback() {
+        FFmpegHelper.convertFormat(inputPath, outputPath, new FFmpegHelper.FFmpegCallback() {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("convert_mp4", inputPath, outputPath);
                     showStatus("转换成功: " + outputPath);
                     currentVideoPath = outputPath;
                     playVideo(outputPath);
@@ -401,6 +532,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onSuccess() {
                 runOnUiThread(() -> {
+                    saveMediaRecord("convert_mp3", input, outputPath);
                     showStatus("转换成功: " + outputPath);
                     currentAudioPath = outputPath;
                 });

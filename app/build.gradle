@@ -20,6 +20,43 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    buildFeatures {
+        buildConfig true
+        resValues true
+    }
+
+    flavorDimensions "env"
+    productFlavors {
+        dev {
+            dimension "env"
+            buildConfigField "String", "ENV", "\"dev\""
+            buildConfigField "String", "API_HOST", "\"https://dev-api.xxx.com\""
+            resValue "string", "env_name", "dev"
+            resValue "string", "api_host", "https://dev-api.xxx.com"
+        }
+        sit {
+            dimension "env"
+            buildConfigField "String", "ENV", "\"sit\""
+            buildConfigField "String", "API_HOST", "\"https://sit-api.xxx.com\""
+            resValue "string", "env_name", "sit"
+            resValue "string", "api_host", "https://sit-api.xxx.com"
+        }
+        uat {
+            dimension "env"
+            buildConfigField "String", "ENV", "\"uat\""
+            buildConfigField "String", "API_HOST", "\"https://uat-api.xxx.com\""
+            resValue "string", "env_name", "uat"
+            resValue "string", "api_host", "https://uat-api.xxx.com"
+        }
+        prod {
+            dimension "env"
+            buildConfigField "String", "ENV", "\"prod\""
+            buildConfigField "String", "API_HOST", "\"https://api.xxx.com\""
+            resValue "string", "env_name", "prod"
+            resValue "string", "api_host", "https://api.xxx.com"
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
@@ -33,6 +70,7 @@ android {
 }
 
 dependencies {
+    implementation project(':dao')
     implementation project(':utils')
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation libs.appcompat
