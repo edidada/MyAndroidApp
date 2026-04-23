@@ -8,10 +8,23 @@ const APP_ID = "cli_a96d98a94ff9dcbd";
 const APP_SECRET = "BECYV6WkWEDUN0yac0yBwfT4epLiMqiy";
 const BITE_TABLE_ID = "XtE2bpdbRaMbn5sBBumcbH8gnAg"; // 从多维表格链接提取
 const TABLE_ID = "tblWVf5cyZrl0OnR"; // 从多维表格链接提取
+const ATTACHMENT_FIELD_NAME = "日程接口响应截图"; // 必须是多维表格中的附件字段
 const YOUR_NAME = "王磊";
 const YOUR_AGE = 33;
 const YOUR_SCHOOL = "黄山学院";
 const BASE_URL = "https://open.feishu.cn/open-apis";
+
+function getFeishuError(err) {
+  const status = err.response?.status;
+  const logId = err.response?.headers?.["x-tt-logid"];
+  const payload = err.response?.data;
+
+  if (payload) {
+    return { status, logId, payload };
+  }
+
+  return { status, logId, message: err.message };
+}
 
 // -------------------------- 2. 获取应用凭证 token --------------------------
 async function getTenantAccessToken() {
@@ -178,23 +191,25 @@ async function uploadCalendarScreenshot(token, recordId, calendarRespData) {
       return;
     }
     
-    // 1. 生成临时文件
+    // 1. 生成临时附件文件
     const screenshotDir = path.join(__dirname, 'screenshots');
-    if (!fs.existsSync(screenshotDir)) {
-      fs.mkdirSync(screenshotDir);
-    }
+    fs.mkdirSync(screenshotDir, { recursive: true });
     
-    // 生成 txt 文件（为了兼容性）
-    const filePath = path.join(screenshotDir, `calendar_resp_${Date.now()}.txt`);
+    // 生成 txt 文件并作为多维表格附件上传
+    const fileName = `calendar_resp_${Date.now()}.txt`;
+    const filePath = path.join(screenshotDir, fileName);
     fs.writeFileSync(filePath, JSON.stringify(calendarRespData, null, 2), 'utf8');
     console.log("✅ 已生成临时文件:", filePath);
+    const fileSize = fs.statSync(filePath).size;
 
-    // 2. 飞书云盘上传
+    // 2. 上传到多维表格附件素材池
     const uploadUrl = `${BASE_URL}/drive/v1/medias/upload_all`;
     const formData = new FormData();
+    formData.append('file_name', fileName);
+    formData.append('size', String(fileSize));
     formData.append('file', fs.createReadStream(filePath));
-    formData.append('parent_type', 'folder'); 
-    formData.append('parent_node', BITE_TABLE_ID); 
+    formData.append('parent_type', 'bitable_file');
+    formData.append('parent_node', BITE_TABLE_ID);
 
     const uploadHeaders = {
       Authorization: `Bearer ${token}`,
@@ -222,17 +237,19 @@ async function uploadCalendarScreenshot(token, recordId, calendarRespData) {
     
     const updateData = {
       fields: {
-        // ⚠️ 关键点：这里必须对应多维表格里的“附件”字段，不能是“图片”字段
-        "日程接口响应截图": [
+        [ATTACHMENT_FIELD_NAME]: [
           { file_token: file_token }
         ]
       }
     };
     
-    await axios.put(updateUrl, updateData, { headers: updateHeaders });
+    const updateResp = await axios.put(updateUrl, updateData, { headers: updateHeaders });
+    if (updateResp.data.code !== 0) {
+      throw new Error(`写入多维表格附件字段失败 ${JSON.stringify(updateResp.data)}`);
+    }
     console.log("✅ 场景6：附件已成功上传到多维表格！");
   } catch (err) {
-    console.error("❌ 场景6出错", err.response?.data || err.message);
+    console.error("❌ 场景6出错", getFeishuError(err));
     console.warn("⚠️ 场景6：上传截图失败，跳过该步骤");
   }
 }
