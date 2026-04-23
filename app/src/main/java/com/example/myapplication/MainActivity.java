@@ -17,7 +17,10 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import com.example.utils.DateUtils;
+import com.example.utils.KotlinHelper;
 import com.example.utils.LogUtils;
+import com.example.utils.MathUtils;
 import com.example.utils.ToastUtils;
 import com.example.utils.StringUtils;
 import com.google.android.exoplayer2.ExoPlayer;
@@ -63,7 +66,24 @@ public class MainActivity extends AppCompatActivity {
         LogUtils.d("MainActivity", "utils 模块测试");
         String testStr = "hello world";
         LogUtils.d("StringUtils", "原始: " + testStr + ", 首字母大写: " + StringUtils.capitalize(testStr));
-        ToastUtils.show(this, "utils 模块加载成功！");
+        
+        // 测试 Kotlin 工具类
+        LogUtils.d("DateUtils", "当前时间: " + DateUtils.getCurrentTime());
+        LogUtils.d("DateUtils", "时间戳: " + DateUtils.getTimestamp());
+        
+        LogUtils.d("MathUtils", "10 + 20 = " + MathUtils.add(10, 20));
+        LogUtils.d("MathUtils", "最大值: " + MathUtils.max(3, 7, 2, 9));
+        
+        // 测试 Kotlin 类
+        KotlinHelper helper = new KotlinHelper();
+        LogUtils.d("KotlinHelper", helper.getMessage());
+        LogUtils.d("KotlinHelper", helper.greet("Android"));
+        LogUtils.d("KotlinHelper", helper.greet()); // 默认参数
+        LogUtils.d("KotlinHelper", "和: " + helper.calculateSum(1, 2, 3, 4, 5));
+        
+        LogUtils.d("KotlinHelper", KotlinHelper.staticMethod());
+        
+        ToastUtils.show(this, "utils 模块加载成功！Kotlin 调用成功！");
     }
 
     private void setupButtons() {
