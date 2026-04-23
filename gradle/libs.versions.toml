@@ -1,6 +1,5 @@
 [versions]
 agp = "9.1.1"
-kotlin = "1.9.20"
 junit = "4.13.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
@@ -20,5 +19,3 @@ dokitx-no-op = { group = "io.github.didi.dokit", name = "dokitx-no-op", version.
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-
