@@ -1,10 +1,8 @@
-plugins {
-    alias(libs.plugins.android.library)
-}
+apply plugin: 'com.android.library'
 
 android {
     namespace 'com.example.dao'
-    compileSdk 36
+    compileSdk 34
 
     defaultConfig {
         minSdk 24
@@ -21,9 +19,6 @@ android {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
-
-    // This module only contains Java Room code.
-    enableKotlin = false
 }
 
 dependencies {

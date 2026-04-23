@@ -1,5 +1,9 @@
 pluginManagement {
     repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public/' }
+        maven { url 'https://mirrors.huaweicloud.com/repository/maven/' }
+        maven { url 'https://didi.github.io/maven/' }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")
@@ -17,11 +21,12 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google()
-        mavenCentral()
         maven { url 'https://maven.aliyun.com/repository/public/' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://mirrors.huaweicloud.com/repository/maven/' }
         maven { url 'https://didi.github.io/maven/' }
+        google()
+        mavenCentral()
     }
 }
 

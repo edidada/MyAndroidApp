@@ -1,19 +1,18 @@
-plugins {
-    alias(libs.plugins.android.application)
+apply plugin: 'com.android.application'
+
+def dokitPluginEnabled = (findProperty("DOKIT_PLUGIN_SWITCH") ?: "false").toString().toBoolean()
+if (dokitPluginEnabled) {
+    apply plugin: 'com.didi.dokit'
 }
 
 android {
     namespace 'com.example.myapplication'
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk 34
 
     defaultConfig {
         applicationId "com.example.myapplication"
         minSdk 24
-        targetSdk 36
+        targetSdk 34
         versionCode 1
         versionName "1.0"
 
@@ -69,10 +68,21 @@ android {
     }
 }
 
+if (dokitPluginEnabled) {
+    dokitExt {
+        comm {
+            gpsSwitch true
+            networkSwitch true
+            bigImgSwitch true
+            webViewSwitch true
+        }
+    }
+}
+
 dependencies {
     implementation project(':dao')
     implementation project(':utils')
-    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.core:core-ktx:1.10.1'
     implementation libs.appcompat
     implementation libs.material
     debugImplementation 'io.github.didi.dokit:dokitx:3.5.0'
