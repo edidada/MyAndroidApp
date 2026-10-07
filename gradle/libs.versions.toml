@@ -7,6 +7,10 @@ espressoCore = "3.5.1"
 appcompat = "1.6.1"
 material = "1.10.0"
 dokit = "3.5.0"
+matrix = "2.1.0"
+leakcanary = "2.14"
+metricsPerformance = "1.0.0"
+tracing = "1.3.0"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -18,6 +22,18 @@ dokitx = { group = "io.github.didi.dokit", name = "dokitx", version.ref = "dokit
 dokitx-no-op = { group = "io.github.didi.dokit", name = "dokitx-no-op", version.ref = "dokit" }
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+matrix-android-lib = { group = "com.tencent.matrix", name = "matrix-android-lib", version.ref = "matrix" }
+matrix-android-commons = { group = "com.tencent.matrix", name = "matrix-android-commons", version.ref = "matrix" }
+matrix-trace-canary = { group = "com.tencent.matrix", name = "matrix-trace-canary", version.ref = "matrix" }
+matrix-io-canary = { group = "com.tencent.matrix", name = "matrix-io-canary", version.ref = "matrix" }
+matrix-memory-canary = { group = "com.tencent.matrix", name = "matrix-memory-canary", version.ref = "matrix" }
+matrix-battery-canary = { group = "com.tencent.matrix", name = "matrix-battery-canary", version.ref = "matrix" }
+matrix-resource-canary-android = { group = "com.tencent.matrix", name = "matrix-resource-canary-android", version.ref = "matrix" }
+matrix-resource-canary-common = { group = "com.tencent.matrix", name = "matrix-resource-canary-common", version.ref = "matrix" }
+matrix-resource-canary-analyzer = { group = "com.tencent.matrix", name = "matrix-resource-canary-analyzer", version.ref = "matrix" }
+leakcanary = { group = "com.squareup.leakcanary", name = "leakcanary-android", version.ref = "leakcanary" }
+metrics-performance = { group = "androidx.metrics", name = "metrics-performance", version.ref = "metricsPerformance" }
+tracing = { group = "androidx.tracing", name = "tracing", version.ref = "tracing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

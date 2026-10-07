@@ -1,7 +1,10 @@
 package com.example.myapplication;
 
 import android.app.Application;
+
 import com.didichuxing.doraemonkit.DoKit;
+import com.example.myapplication.perf.MatrixAPM;
+import com.example.myapplication.perf.PerfMarkers;
 
 public class MyApplication extends Application {
     
@@ -9,5 +12,9 @@ public class MyApplication extends Application {
     public void onCreate() {
         super.onCreate();
         new DoKit.Builder(this).build();
+
+        // APM: Matrix（免插桩子集）+ JankStats/Perfetto 标记
+        PerfMarkers.markAppCreateStart();
+        MatrixAPM.init(this, BuildConfig.DEBUG);
     }
 }

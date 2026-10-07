@@ -67,6 +67,14 @@ android {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
+
+    packaging {
+        jniLibs {
+            // matrix-backtrace 与 ffmpeg-kit 各自带一份 libc++_shared.so（同路径同 ABI），
+            // mergeNativeLibs 会直接报 "2 files found with path"。这里让合并器取其一而不是失败。
+            pickFirsts.add('**/libc++_shared.so')
+        }
+    }
 }
 
 dependencies {
@@ -82,4 +90,22 @@ dependencies {
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
+
+    // --- Tencent Matrix APM (免插桩子集：AGP 9 上无法使用 matrix-gradle-plugin) ---
+    implementation libs.matrix.android.lib
+    implementation libs.matrix.android.commons
+    implementation libs.matrix.trace.canary
+    implementation libs.matrix.io.canary
+    implementation libs.matrix.memory.canary
+    implementation libs.matrix.battery.canary
+    implementation libs.matrix.resource.canary.android
+    implementation libs.matrix.resource.canary.common
+    implementation libs.matrix.resource.canary.analyzer
+
+    // --- Perfetto 标记 + 掉帧统计（替代已停更且 jitpack 不可达的 AndroidGodEye）---
+    implementation libs.tracing
+    implementation libs.metrics.performance
+
+    // --- 内存泄漏引用链：debug 专用，避免与 Matrix ResourceCanary 抢 heap dump ---
+    debugImplementation libs.leakcanary
 }
