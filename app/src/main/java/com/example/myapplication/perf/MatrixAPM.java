@@ -23,6 +23,7 @@ import com.tencent.matrix.resource.ResourcePlugin;
 import com.tencent.matrix.resource.config.ResourceConfig;
 import com.tencent.matrix.trace.TracePlugin;
 import com.tencent.matrix.trace.config.TraceConfig;
+import com.tencent.mrs.plugin.IDynamicConfig;
 
 import java.io.File;
 
@@ -37,12 +38,31 @@ import java.io.File;
  *   <li>失效（需注入）：AppMethodBeat 方法级耗时、EvilMethodTrace、ResourceCanary 的
  *       broadcast/handler/msg 钩子 —— 故这里显式关闭</li>
  * </ul>
+ *
+ * <p>还有一个 ABI 维度的坑：Matrix 2.1.0 的 native 只给 arm64-v8a / armeabi-v7a 发
+ * {@code libtrace-canary.so} 与 {@code libwechatbacktrace.so}，所以 x86/x86_64（官方模拟器、
+ * x86 车机）上 TraceCanary 与 ResourceCanary 根本没有 so 可用。下面按当前 ABI 探测后再决定装载哪些插件，
+ * 缺库就跳过并打日志，绝不让 APM 把宿主进程掀掉（2026-10-09 在 API 34 x86_64 模拟器实测有效）。
  */
 public final class MatrixAPM {
 
     private static final String TAG = "MatrixAPM";
 
     private static volatile boolean sInstalled;
+
+    /**
+     * 各 Config 的 dynamicConfig 不能传 null：插件 start() 里会无条件调用它读开关
+     * （实测 IOCanaryCore.initDetectorsAndHookers 直接 NPE，把 startAllPlugins 打断，
+     * 后面的 MemoryCanary / Battery 全都没起来）。这里给一个恒返回默认值的实现，
+     * 等价于"不做云端动态开关，全部按 TraceConfig/IOConfig 里的静态值跑"。
+     */
+    private static final IDynamicConfig DYNAMIC_CONFIG = new IDynamicConfig() {
+        @Override public String get(String key, String defValue) { return defValue; }
+        @Override public int get(String key, int defValue) { return defValue; }
+        @Override public long get(String key, long defValue) { return defValue; }
+        @Override public boolean get(String key, boolean defValue) { return defValue; }
+        @Override public float get(String key, float defValue) { return defValue; }
+    };
 
     private MatrixAPM() {
     }
@@ -53,12 +73,21 @@ public final class MatrixAPM {
         }
         sInstalled = true;
 
+        // Matrix 的 native 库只发 arm64-v8a / armeabi-v7a：libtrace-canary.so（卡顿/ANR 的 native 侧）、
+        // libwechatbacktrace.so（栈回溯，matrix-backtrace 与 resource-canary 都靠它）；
+        // 只有 libio-canary.so / libmatrix_hprof_analyzer.so / libmatrix_mem_util.so 覆盖到 x86 与 x86_64。
+        // 缺 so 时插件在 Plugin.init() 里抛 UnsatisfiedLinkError，会顺着 Application.onCreate 掀掉整个进程，
+        // 所以装载前先按当前 ABI 实测一次，别让 APM 把宿主搞崩。
+        final boolean hasTraceCanary = hasNativeLib(app, "libtrace-canary.so");
+        final boolean hasBacktrace = hasNativeLib(app, "libwechatbacktrace.so");
+        final boolean hasHprofAnalyzer = hasNativeLib(app, "libmatrix_hprof_analyzer.so");
+
         File anrDir = new File(app.getFilesDir(), "matrix/anr");
         //noinspection ResultOfMethodCallIgnored
         anrDir.mkdirs();
 
         TraceConfig traceConfig = new TraceConfig.Builder()
-                .dynamicConfig(null)
+                .dynamicConfig(DYNAMIC_CONFIG)
                 .enableAppMethodBeat(false)          // 需要插件注入方法出入口，此处关闭
                 .enableEvilMethodTrace(false)      // 同上
                 .enableAnrTrace(true)
@@ -73,12 +102,12 @@ public final class MatrixAPM {
                 .build();
 
         IOConfig ioConfig = new IOConfig.Builder()
-                .dynamicConfig(null)
+                .dynamicConfig(DYNAMIC_CONFIG)
                 .build();
 
         // NO_DUMP：把 heap dump 让给 LeakCanary，避免两个工具同时抓堆导致卡顿与 OOM
         ResourceConfig resourceConfig = new ResourceConfig.Builder()
-                .dynamicConfig(null)
+                .dynamicConfig(DYNAMIC_CONFIG)
                 .setAutoDumpHprofMode(ResourceConfig.DumpMode.NO_DUMP)
                 .setDetectDebuger(false)
                 .build();
@@ -88,22 +117,42 @@ public final class MatrixAPM {
                 .enableForegroundMode(true)
                 .build();
 
-        Matrix matrix = new Matrix.Builder(app)
-                .plugin(new TracePlugin(traceConfig))
-                .plugin(new IOCanaryPlugin(ioConfig))
-                .plugin(new MemoryCanaryPlugin(new MemoryCanaryConfig()))
-                .plugin(new BatteryMonitorPlugin(batteryConfig))
-                .plugin(new ResourcePlugin(resourceConfig))
-                .pluginListener(new LogReporter())
-                .build();
+        Matrix.Builder builder = new Matrix.Builder(app);
+        if (hasTraceCanary) {
+            builder.plugin(new TracePlugin(traceConfig));
+        } else {
+            Log.w(TAG, "TracePlugin skipped: libtrace-canary.so absent in "
+                    + app.getApplicationInfo().nativeLibraryDir + " (ANR/FPS/Startup 无 native 支撑)");
+        }
+        builder.plugin(new IOCanaryPlugin(ioConfig));
+        builder.plugin(new MemoryCanaryPlugin(new MemoryCanaryConfig()));
+        builder.plugin(new BatteryMonitorPlugin(batteryConfig));
+        if (hasBacktrace && hasHprofAnalyzer) {
+            builder.plugin(new ResourcePlugin(resourceConfig));
+        } else {
+            Log.w(TAG, "ResourcePlugin skipped: libwechatbacktrace.so / libmatrix_hprof_analyzer.so 不全");
+        }
+        builder.pluginListener(new LogReporter());
+        Matrix matrix = builder.build();
 
-        Matrix.init(matrix);
-        matrix.startAllPlugins();
+        try {
+            Matrix.init(matrix);
+            matrix.startAllPlugins();
+        } catch (Throwable t) {
+            // 兜底：任何一个插件起不来，只降级掉 APM，不能影响 App 本身
+            Log.e(TAG, "Matrix startup failed, APM degraded", t);
+        }
 
         attachJankStats(app, debug);
 
         Log.i(TAG, "Matrix installed, plugins=" + matrix.getPlugins().size()
                 + " anrDir=" + anrDir.getAbsolutePath());
+    }
+
+    /** 当前 ABI 到底有没有打包这个 so：split-apk、abiFilters、非 ARM 车机/模拟器都走这里判定。 */
+    private static boolean hasNativeLib(@NonNull Application app, @NonNull String fileName) {
+        String dir = app.getApplicationInfo().nativeLibraryDir;
+        return dir != null && new File(dir, fileName).isFile();
     }
 
     /** Matrix 各插件的运行状态与检测结果，全部经 PluginListener 回流。 */
@@ -146,7 +195,7 @@ public final class MatrixAPM {
     }
 
     // ------------------------------------------------------------------
-    // 掉帧看板替代件：androidx.metrics 的 JankStats（AndroidGodEye 已停更且 jitpack 返回 401）
+    // 掉帧统计：androidx.metrics 的 JankStats（AndroidGodEye 看板见 src/debug 下的 GodEyeDashboard）
     // ------------------------------------------------------------------
 
     private static void attachJankStats(Application app, final boolean debug) {
