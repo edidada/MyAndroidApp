@@ -248,3 +248,197 @@ readelf --dyn-syms --wide /tmp/apkso/lib/arm64-v8a/libffmpegkit.so \
 
 至此 §8 的"编译"一行成立；**运行时那一行仍是 ❌**——符号与打包都能静态证明，"ANR 现场抓到主线程堆栈"必须上真机/车机跑一次人为卡死才能确认。
 
+## 10. 更正与补记：AndroidGodEye 其实装得上（2026-10-07 深夜）
+
+§5 里写的"AndroidGodEye 不可获取（jitpack 401、不在 Central）"**是错的**，错因很低级：我按作者真名猜了坐标 `com.github.maoruoyu:*`，而 GitHub 用户名是 **Kyson**。实测：
+
+| 探测 | 结果 |
+|---|---|
+| `https://jitpack.io/com/github/maoruoyu/AndroidGodEyeLibrary/maven-metadata.xml` | 401 `Repo not found or no token provided`（我当时据此下了结论） |
+| 对照实验 `https://jitpack.io/com/github/square/okhttp/maven-metadata.xml` | 200 —— 说明 jitpack 本身通，401 只代表仓库名不存在 |
+| `gh api search/repositories?q=AndroidGodEye` | `Kyson/AndroidGodEye`，2639 stars，最后 push 2023-01-26 |
+| `gh api repos/Kyson/AndroidGodEye/tags` | 最新 `3.4.3` |
+| `com.github.Kyson:AndroidGodEye:3.4.3`（伞形 POM） | 200，POM 里指向 5 个子模块 aar |
+| 子模块 aar 直取 | `godeye-core` 323,973B / `godeye-monitor` 4,729,779B / `godeye-leakcanary` / `godeye-okhttp` / `godeye-xcrash` 全 200 |
+| 阿里云 public / Central / 华为云 同路径 | 404 —— **只有 jitpack 有**，所以 `settings.gradle` 必须加 jitpack 仓库 |
+
+教训：搜不到制品时先验证"仓库整体是否可达"（拿一个已知存在的坐标做对照），再判断是网络问题还是坐标问题。
+
+### 装法（debug 变体）
+
+- `settings.gradle`：`dependencyResolutionManagement.repositories` 加 `maven { url 'https://jitpack.io' }`（本工程是 `FAIL_ON_PROJECT_REPOS`，只能在 settings 里加）
+- `libs.versions.toml`：`godeye = "3.4.3"`，`godeye-core` / `godeye-monitor`，group 都是 `com.github.Kyson.AndroidGodEye`
+- `app/build.gradle`：`debugImplementation(libs.godeye.core) { exclude group: 'com.android.support' }`，monitor 同理
+- 代码：`app/src/debug/java/.../perf/GodEyeDashboard.java`（真实现）+ `app/src/release/java/.../perf/GodEyeDashboard.java`（空实现，保证 release 也能编译，因为依赖是 `debugImplementation`）；`MyApplication.onCreate()` 末尾 `GodEyeDashboard.init(this)`
+
+**必须整组排除 `com.android.support`**：godeye 是 2020 年的库，传递依赖带 `support-compat:28.0.0` / `versionedparcelable:28.0.0`，与 `androidx.core:core:1.12.0`、`androidx.versionedparcelable:1.1.1` 同名类撞车，`:app:checkDevDebugDuplicateClasses` 直接失败（我第一次构建就死在这）。排除后仍有的 3 个 `android.support.v4.app.Fragment/FragmentManager` 引用查过来源，都在不会执行的路径上：`cn.hikyson.methodcanary.lib.Util`（METHOD 模块没开，见下）与 `leakcanary.internal.AndroidSupportFragmentDestroyWatcher`（LeakCanary 用 `Class.forName` 拿，dexdump 里能看到那句 const-string，拿不到就走 androidx 分支）。
+
+### 模块取舍（逐个显式打开，`noneConfigBuilder` 起步）
+
+API 也是 `javap` 出来的，不是抄 README：入口是 `GodEye.instance().init(app)` + `install(GodEyeConfig)`，看板服务是 `GodEyeHelper.startMonitor()`；`GodEyeMonitor.work(Context, int)` 是包内可见，外面调不到。
+
+- 开了：CPU、BATTERY（功耗看板）、FPS、HEAP、PSS、RAM、THREAD、TRAFFIC、CRASH、SM、STARTUP、PAGELOAD、VIEW、APP SIZE
+- 关了并写明原因：LEAK（要 `godeye-leakcanary`，基于旧 LeakCanary API，与本工程 2.14 冲突）、METHOD（要字节码插桩，AGP 9 上同 §1 的 Matrix 插件问题）、NETWORK/IMAGE（数据源分别是特定 OkHttp 版本与 Glide/Picasso，本工程没有）
+
+### 实测结果
+
+`./gradlew.bat :app:assembleDevDebug` → BUILD SUCCESSFUL in 51s，`:app:testDevDebugUnitTest` → 7/0（XML 时间戳 23:42）。APK 141,778,138 B：
+
+- `assets/android-godeye-dashboard/`（内置前端：`index.html` + `main.f223975e.js` 2.9MB + css）—— 这就是"实时看板"的页面，不用另装 PC 客户端
+- dex 里 206 个 `cn/hikyson/**` 类，含 `GodEye`、`GodEyeConfig`、`GodEyeHelper`、`monitor.GodEyeMonitor`、`monitor.server.GodEyeMonitorServer`
+- manifest 合并进 `cn.hikyson.godeye.core.GodEyeInitContentProvider`（authority `com.example.myapplication.cn.hikyson.godeye.core.init`，Provider 自动初始化）与 `LocalNotificationListenerService`
+
+看板用法：`adb forward tcp:8087 tcp:8087` → 浏览器 `http://localhost:8087`；车机若与 PC 同网段则直接 `http://<车机IP>:8087`。
+
+### 与 Matrix 的分工（这才是"数据感"的完整答案）
+
+| 需求 | 用什么 | 为什么 |
+|---|---|---|
+| 建立实时数据感（FPS/CPU/内存/电量曲线） | AndroidGodEye 看板 | PC 浏览器实时推送，适合盯盘 |
+| 抓一次卡顿/ANR 的现场堆栈 | Matrix `SignalAnrTracer` + `LooperMonitor` | 看板只给数字，不给栈 |
+| 启动慢的定位 | 两边配合 | GodEye STARTUP 给曲线，Matrix startup 给逐段耗时落盘 |
+| 掉帧归因到业务代码 | JankStats + `PerfMarkers.section()` + Perfetto | `states` 里的业务标记能直接落到 trace |
+| 泄漏 | LeakCanary 2.14（debug） | Matrix ResourceCanary 设 `NO_DUMP` 让位，见 §6 |
+
+§8 的运行时那一行状态不变：本次新增内容同样只做到**构建/打包/符号层验证**，看板的实时刷新必须接设备后确认。haha-2.0.3 的 D8 签名告警照旧忽略（见 §9）。
+
+## 11. 运行时验证：手机接不上，改用官方 AVD 跑通了（2026-10-09 晚）
+
+§10 结尾那句"看板实时刷新必须接设备后确认"现在部分兑现了——不是真机，是本机新建的官方模拟器。**运行时一跑就炸出两个构建期看不见的真 bug**，这正是运行时验证的价值。
+
+### 11.1 为什么走模拟器
+
+真机始终没连上：USB 层每次都在"读设备描述符"这步失败，主机侧留的条目是占位 ID `USB\VID_0000&PID_0002`，Problem = `CM_PROB_FAILED_POST_START`（"未知 USB 设备(设备描述符请求失败)"）。手机重启后 `LastArrivalDate` 从 19:37:07 跳到 19:52:33，说明它重新上线过一次、主机重新枚举过一次，失败一模一样 —— 排除了手机软件状态，剩下的是线 / 尾插 / 口的信号问题。诊断脚本在 `tools/usb-adb-check.ps1`（五步：找 adb → `adb devices -l` → `Get-PnpDevice` 带 Problem 码 → MTP/便携设备是否出现 → Kernel-PnP 410/411/430 事件）。
+
+本机的模拟器的条件先核过：`emulator -accel-check` 输出 `WHPX(10.0.26200) is installed and usable`（Hyper-V 平台在跑，官方模拟器正好用它），`dl.google.com` 直连可达（4096×100 字节采样 1.3 MB/s），C: 剩 27 GB。
+
+### 11.2 AVD 落地配方（含两个卡点）
+
+| 步骤 | 实测做法 | 卡点与结论 |
+|---|---|---|
+| cmdline-tools | `$Sdk/cmdline-tools/latest` 里只有 `.installer` 空壳，**没有 `bin/`**，`sdkmanager`/`avdmanager` 全不可用 | 直接下 `commandlinetools-win-14742923_latest.zip`（150,532,528 B，2026-01-20），解到 `$Sdk/cmdline-tools/qoder/` —— 必须是 `<sdk>/cmdline-tools/<任意名>/bin` 结构，工具才认得出 SDK 根 |
+| 装镜像 | `sdkmanager --sdk_root=$Sdk 'system-images;android-34;google_apis;x86_64'` | `x86_64-34_r14.zip`，装完占 4.2 GB；选 `google_apis` 而不是 `playstore`，因为要 `adb root`/调试自由度 |
+| 建 AVD | `avdmanager create avd -n mx_avd -k 'system-images;android-34;google_apis;x86_64' -d pixel_6` | 第一次报 `Package path is not valid`：工具是从 D: 解压出来的，SDK 根推错了；搬进 `$Sdk/cmdline-tools/qoder` 后成功。AVD 放 `D:\develops\android\avd`（`ANDROID_AVD_HOME`），给 C: 省 6 GB 数据分区 |
+| 启动 | `emulator -avd mx_avd -gpu swiftshader_indirect -no-boot-anim -no-audio -no-snapshot-save -memory 2048 -cores 4` | `sys.boot_completed=1` 用时约 40 s；`ro.product.cpu.abi = x86_64`，SDK 34 |
+| 装包 | `adb install -r -g app/build/outputs/apk/dev/debug/app-dev-debug.apk`（142 MB） | Streamed Install，4 s。**不要用 `-G 2G`**，那台 emulator 会在 `PackageManagerShellCommand` 抛栈 |
+
+### 11.3 Matrix 侧：`dynamicConfig(null)` 会把整个 APM 打断
+
+第一次运行的日志（原样）：
+
+```
+W MatrixAPM: Matrix startup failed, APM degraded
+E MatrixAPM: java.lang.NullPointerException: Attempt to invoke interface method
+    'boolean com.tencent.mrs.plugin.IDynamicConfig.get(String, boolean)' on a null object reference
+    at com.tencent.matrix.iocanary.config.IOConfig.isDetectFileIOInMainThread(IOConfig.java:61)
+    at com.tencent.matrix.iocanary.core.IOCanaryCore.initDetectorsAndHookers(IOCanaryCore.java:80)
+    at com.tencent.matrix.iocanary.IOCanaryPlugin.start(IOCanaryPlugin.java:62)
+    at com.tencent.matrix.Matrix.startAllPlugins(Matrix.java:84)
+```
+
+`Matrix.startAllPlugins()` 是**一个循环里按顺序 start**，第 4 个插件抛异常，排在它后面的 MemoryCanary / BatteryMonitor 就再也不 start 了。写代码时以为 `dynamicConfig(null)` = "不用云端开关"，实际是"给 null 然后插件在 start 里 NPE"。修法：自己实现 `IDynamicConfig`（5 个重载 `get(String, X)`，接口在 `matrix-android-lib` 里，别处没有），每个都直接返回 `defValue`。
+
+`com.tencent.mrs.plugin.IDynamicConfig` 的全部方法（`javap` 实测，只有这 5 个）：
+
+```java
+String get(String, String);  int get(String, int);  long get(String, long);
+boolean get(String, boolean); float get(String, float);
+```
+
+### 11.4 Matrix 的 native 覆盖是按 ABI 分布的，x86_64 上少两个库
+
+把三个 AAR 的 `jni/` 逐个 `unzip -l` 得到：
+
+| so | 来自 | arm64-v8a | armeabi-v7a | x86 | x86_64 |
+|---|---|---|---|---|---|
+| `libtrace-canary.so` | matrix-trace-canary | ✅ | ✅ | ❌ | ❌ |
+| `libwechatbacktrace.so` | matrix-backtrace / resource-canary | ✅ | ✅ | ❌ | ❌ |
+| `libio-canary.so` | matrix-io-canary | ✅ | ✅ | ✅ | ✅ |
+| `libmatrix_hprof_analyzer.so` / `libmatrix_mem_util.so` | matrix-resource-canary-android | ✅ | ✅ | ✅ | ✅ |
+| `libc++_shared.so`（§9 那次撞车的当事人） | matrix-backtrace 与 ffmpeg-kit | ✅ | ✅ | — | ✅ |
+
+所以 x86_64 模拟器上卡顿/ANR/资源泄漏这三块**根本没有 native 支撑**，硬装就是在 `Plugin.init()` 里 `UnsatisfiedLinkError`。`MatrixAPM` 现在先探 `ApplicationInfo.nativeLibraryDir` 里有没有对应文件，再决定挂哪些插件：
+
+```
+W MatrixAPM: TracePlugin skipped: libtrace-canary.so absent in /data/app/~~…/lib/x86_64 (ANR/FPS/Startup 无 native 支撑)
+W MatrixAPM: ResourcePlugin skipped: libwechatbacktrace.so / libmatrix_hprof_analyzer.so 不全
+I MatrixAPM: plugin init   : BatteryMonitorPlugin / Matrix.MemoryCanaryPlugin / io
+I MatrixAPM: plugin start  : BatteryMonitorPlugin / Matrix.MemoryCanaryPlugin / io
+I MatrixAPM: Matrix installed, plugins=3
+```
+
+这条降级路径对 x86 车机同样有意义：**别假设 Matrix 的 so 一定在**。顺带说明 §9 那个 `pickFirsts` 的 libc++ 之争只在 arm64/armeabi 上成立，x86_64 上 matrix-backtrace 没有 so，打包进包的是 ffmpeg-kit 那份新的，不存在旧库覆盖问题。
+
+### 11.5 AndroidGodEye 侧：SM 模块的前台服务在 targetSdk 34+ 必崩
+
+```
+E AndroidRuntime: java.lang.RuntimeException: Unable to start service
+  cn.hikyson.godeye.core.internal.notification.LocalNotificationListenerService …
+  android.app.MissingForegroundServiceTypeException: Starting FGS without a type
+  callerApp=ProcessRecord{… com.example.myapplication …} targetSDK=36
+```
+
+看 godeye-core 自带的 `AndroidManifest.xml`：它 `<uses-sdk targetSdkVersion="29">`，`LocalNotificationListenerService` 声明里没有 `foregroundServiceType`，而 `SmConfig`（SystemMeasure，`debugNotification=true`）会 `startForegroundService` 拉起它。Android 14 起 targetSdk≥34 必须带类型，于是**装上就崩**。库的源码不在本工程，改不了，就在 `app/src/debug/AndroidManifest.xml`（debug 变体专属，release 里根本没有 GodEye）用 `tools:node="merge"` 给它补声明：
+
+```xml
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+<service android:name="cn.hikyson.godeye.core.internal.notification.LocalNotificationListenerService"
+    android:foregroundServiceType="dataSync" tools:node="merge" />
+```
+
+改完系统日志变成 `ActivityManager: Background started FGS: Allowed …`，进程存活。§10 里"看板可用"的结论成立，但**必须带这个补丁**，否则 debug 包一启动就闪退。
+
+### 11.6 §10 的端口写错了：是 5390，而且根路径 404
+
+实测日志：`AndroidGodEye monitor is running at port [5390]`。所以 `adb forward tcp:8087 tcp:8087` 转发过去必然连不上（那次 curl 报 `Empty reply from server` 就是这个原因）。正确用法：
+
+```
+adb forward tcp:5390 tcp:5390
+浏览器打开 http://localhost:5390/index.html     # / 返回 404，必须带 /index.html
+```
+
+`/index.html`、`/favicon.ico`、`/static/js/main.f223975e.js`（2.9 MB，看板本体）、`/manifest.json` 都由设备侧直接吐出，无需 PC 端工具。
+
+### 11.7 看板实时读数（2026-10-09 20:29，页面结构快照原样）
+
+| 模块 | 实测值 |
+|---|---|
+| FPS | 59 / 60 |
+| Battery | Not Charging（模拟器无电池事件） |
+| Ram / Pss | 1973.7 M / 93.02 M |
+| CPU | App 1.9 %，Device 0.0 % |
+| Heap | Allocated 16.7 M，Max 192.0 M |
+| Traffic | App ↓0.4 ↑22.4，Device ↓22.9 ↑23.0 KB/s |
+| App Size | Code 135.25 MB，Cache 0.04 MB，Data 0.30 MB |
+| Startup / PageLoad | `MainActivity` `ON_DRAW` Cost **1270 ms**（冷启首帧含 SoD 加载） |
+| Thread | 表格实时列出 `main`、`binder:5690_*`、`matrix_li`、`default_matrix_thread`、`LeakCanary-Heap-Dump`、`AsyncServer` 等，3 页 |
+| Block(卡顿) | SM 探测到并弹告警：`Jank happened.(发生长卡顿): 718ms` / `598ms` |
+| View Canary | 告警 `Too many layouts nested or too much overdraw: com.example.myapplication.MainActivity` |
+| MethodCanary | `Please install method canary first!`（预期，§7 说的 AGP 9 装不了插件） |
+| Crash Info | 面板在，之前那两次 FGS 崩溃发生在补丁前，没有采集到 |
+
+值得单独一句：**SM 的卡顿探测能报出 718ms 这种长卡顿时长**，虽然它给不出堆栈（给栈是 Matrix `SignalAnrTracer` 的活），但在 x86 设备上算是把"有没有卡"这一层补上了。
+
+### 11.8 现在的验证状态（覆盖 §8 最后一行）
+
+| 层面 | 状态 |
+|---|---|
+| 构建 / 打包 / 符号 / manifest / dex | ✅ §9、§10 |
+| 运行时：APM 不崩、插件按 ABI 降级、看板实时刷新 | ✅ 本节，API 34 x86_64 AVD |
+| 运行时：ANR 现场主线程堆栈（`SignalAnrTracer` + `libwechatbacktrace`） | ⛔ 仍未验证，**只能等 ARM 真机/车机**；x86_64 上这两个 so 不存在，造 ANR 也不会有产物 |
+| 运行时：arm64 上 `pickFirsts` 选中的旧 libc++ 与 ffmpeg 共存 | ⛔ 同上，需 ARM 设备 |
+
+复现命令（一次性）：
+
+```
+$Sdk/cmdline-tools/qoder/bin/sdkmanager.bat --sdk_root=$Sdk 'system-images;android-34;google_apis;x86_64'
+ANDROID_AVD_HOME=D:\develops\android\avd avdmanager create avd -n mx_avd -k 'system-images;android-34;google_apis;x86_64' -d pixel_6
+$Sdk/emulator/emulator.exe -avd mx_avd -gpu swiftshader_indirect -no-boot-anim -no-audio -no-snapshot-save -memory 2048 -cores 4
+adb install -r -g app/build/outputs/apk/dev/debug/app-dev-debug.apk
+adb shell am start -n com.example.myapplication/.MainActivity
+adb logcat -d -s MatrixAPM:V GodEyeDashboard:V AndroidRuntime:E
+adb forward tcp:5390 tcp:5390    # 浏览器 http://localhost:5390/index.html
+```
+
+
