@@ -75,6 +75,13 @@ android {
             pickFirsts.add('**/libc++_shared.so')
         }
     }
+
+    sourceSets {
+        // GodEyeDashboard 的 release 空实现放在 src/releaseStub/java：根 .gitignore 第 27 行有
+        // `release/`，src/release/java 不会被 git 跟踪，所以手工挂一个不被忽略的目录进来。
+        // 真实现在 src/debug/java（依赖是 debugImplementation，release 变体里根本没有这些类）。
+        release.java.srcDirs += 'src/releaseStub/java'
+    }
 }
 
 dependencies {
@@ -108,4 +115,14 @@ dependencies {
 
     // --- 内存泄漏引用链：debug 专用，避免与 Matrix ResourceCanary 抢 heap dump ---
     debugImplementation libs.leakcanary
+
+    // --- AndroidGodEye 实时看板（FPS/CPU/内存/电量/线程/启动/页面）：只在 debug 变体进包 ---
+    // godeye-* 是 2020 年的库，transitively 带 com.android.support:*:28.0.0（AndroidX 之前的同名类），
+    // 与 androidx.core / versionedparcelable 直接撞类，必须整组排除。
+    debugImplementation(libs.godeye.core) {
+        exclude group: 'com.android.support'
+    }
+    debugImplementation(libs.godeye.monitor) {
+        exclude group: 'com.android.support'
+    }
 }

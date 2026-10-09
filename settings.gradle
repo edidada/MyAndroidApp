@@ -22,6 +22,8 @@ dependencyResolutionManagement {
         maven { url 'https://maven.aliyun.com/repository/public/' }
         maven { url 'https://mirrors.huaweicloud.com/repository/maven/' }
         maven { url 'https://didi.github.io/maven/' }
+        // AndroidGodEye 只在 jitpack 发布（com.github.Kyson.AndroidGodEye:*）
+        maven { url 'https://jitpack.io' }
     }
 }
 

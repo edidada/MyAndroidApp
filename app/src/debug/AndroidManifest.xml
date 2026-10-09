@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      AndroidGodEye 3.4.3 是 2020 年的库（其 manifest 里 targetSdk 29），它自己把
+      LocalNotificationListenerService 用 startForegroundService 拉成前台服务，却没声明前台服务类型。
+      targetSdk 34+ 上这会直接抛 MissingForegroundServiceTypeException 崩掉进程
+      （2026-10-09 在 API 34 x86_64 模拟器实测复现）。
+      真实现在依赖里，源码改不了，所以在 debug 变体的 manifest 合并时补一个 foregroundServiceType。
+      只有 debug 变体需要：release 变体根本没有 GodEye（依赖是 debugImplementation）。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <application>
+        <service
+            android:name="cn.hikyson.godeye.core.internal.notification.LocalNotificationListenerService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+    </application>
+
+</manifest>
